@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * 首页品牌管理Controller
+ * 首页新品管理Controller
  * Created by macro on 2018/11/6.
  */
 @Controller
