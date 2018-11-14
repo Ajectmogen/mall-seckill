@@ -4,23 +4,23 @@ import java.io.Serializable;
 import java.util.Date;
 
 public class SmsFlashPromotion implements Serializable {
-    private Integer id;
+    private Long id;
 
     private String title;
 
     /**
-     * 开始时间
+     * 开始日期
      *
      * @mbggenerated
      */
-    private Date startTime;
+    private Date startDate;
 
     /**
-     * 结束时间
+     * 结束日期
      *
      * @mbggenerated
      */
-    private Date endTime;
+    private Date endDate;
 
     /**
      * 上下线状态
@@ -34,15 +34,15 @@ public class SmsFlashPromotion implements Serializable {
      *
      * @mbggenerated
      */
-    private String timeName;
+    private Date createTime;
 
     private static final long serialVersionUID = 1L;
 
-    public Integer getId() {
+    public Long getId() {
         return id;
     }
 
-    public void setId(Integer id) {
+    public void setId(Long id) {
         this.id = id;
     }
 
@@ -54,20 +54,20 @@ public class SmsFlashPromotion implements Serializable {
         this.title = title;
     }
 
-    public Date getStartTime() {
-        return startTime;
+    public Date getStartDate() {
+        return startDate;
     }
 
-    public void setStartTime(Date startTime) {
-        this.startTime = startTime;
+    public void setStartDate(Date startDate) {
+        this.startDate = startDate;
     }
 
-    public Date getEndTime() {
-        return endTime;
+    public Date getEndDate() {
+        return endDate;
     }
 
-    public void setEndTime(Date endTime) {
-        this.endTime = endTime;
+    public void setEndDate(Date endDate) {
+        this.endDate = endDate;
     }
 
     public Integer getStatus() {
@@ -78,12 +78,12 @@ public class SmsFlashPromotion implements Serializable {
         this.status = status;
     }
 
-    public String getTimeName() {
-        return timeName;
+    public Date getCreateTime() {
+        return createTime;
     }
 
-    public void setTimeName(String timeName) {
-        this.timeName = timeName;
+    public void setCreateTime(Date createTime) {
+        this.createTime = createTime;
     }
 
     @Override
@@ -94,10 +94,10 @@ public class SmsFlashPromotion implements Serializable {
         sb.append("Hash = ").append(hashCode());
         sb.append(", id=").append(id);
         sb.append(", title=").append(title);
-        sb.append(", startTime=").append(startTime);
-        sb.append(", endTime=").append(endTime);
+        sb.append(", startDate=").append(startDate);
+        sb.append(", endDate=").append(endDate);
         sb.append(", status=").append(status);
-        sb.append(", timeName=").append(timeName);
+        sb.append(", createTime=").append(createTime);
         sb.append(", serialVersionUID=").append(serialVersionUID);
         sb.append("]");
         return sb.toString();

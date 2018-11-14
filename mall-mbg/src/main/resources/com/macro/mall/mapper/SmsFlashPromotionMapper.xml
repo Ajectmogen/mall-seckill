@@ -2,12 +2,12 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.macro.mall.mapper.SmsFlashPromotionMapper">
   <resultMap id="BaseResultMap" type="com.macro.mall.model.SmsFlashPromotion">
-    <id column="id" jdbcType="INTEGER" property="id" />
+    <id column="id" jdbcType="BIGINT" property="id" />
     <result column="title" jdbcType="VARCHAR" property="title" />
-    <result column="start_time" jdbcType="TIMESTAMP" property="startTime" />
-    <result column="end_time" jdbcType="TIMESTAMP" property="endTime" />
+    <result column="start_date" jdbcType="DATE" property="startDate" />
+    <result column="end_date" jdbcType="DATE" property="endDate" />
     <result column="status" jdbcType="INTEGER" property="status" />
-    <result column="time_name" jdbcType="VARCHAR" property="timeName" />
+    <result column="create_time" jdbcType="TIMESTAMP" property="createTime" />
   </resultMap>
   <sql id="Example_Where_Clause">
     <where>
@@ -68,7 +68,7 @@
     </where>
   </sql>
   <sql id="Base_Column_List">
-    id, title, start_time, end_time, status, time_name
+    id, title, start_date, end_date, status, create_time
   </sql>
   <select id="selectByExample" parameterType="com.macro.mall.model.SmsFlashPromotionExample" resultMap="BaseResultMap">
     select
@@ -84,15 +84,15 @@
       order by ${orderByClause}
     </if>
   </select>
-  <select id="selectByPrimaryKey" parameterType="java.lang.Integer" resultMap="BaseResultMap">
+  <select id="selectByPrimaryKey" parameterType="java.lang.Long" resultMap="BaseResultMap">
     select 
     <include refid="Base_Column_List" />
     from sms_flash_promotion
-    where id = #{id,jdbcType=INTEGER}
+    where id = #{id,jdbcType=BIGINT}
   </select>
-  <delete id="deleteByPrimaryKey" parameterType="java.lang.Integer">
+  <delete id="deleteByPrimaryKey" parameterType="java.lang.Long">
     delete from sms_flash_promotion
-    where id = #{id,jdbcType=INTEGER}
+    where id = #{id,jdbcType=BIGINT}
   </delete>
   <delete id="deleteByExample" parameterType="com.macro.mall.model.SmsFlashPromotionExample">
     delete from sms_flash_promotion
@@ -101,16 +101,16 @@
     </if>
   </delete>
   <insert id="insert" parameterType="com.macro.mall.model.SmsFlashPromotion">
-    <selectKey keyProperty="id" order="AFTER" resultType="java.lang.Integer">
+    <selectKey keyProperty="id" order="AFTER" resultType="java.lang.Long">
       SELECT LAST_INSERT_ID()
     </selectKey>
-    insert into sms_flash_promotion (title, start_time, end_time, 
-      status, time_name)
-    values (#{title,jdbcType=VARCHAR}, #{startTime,jdbcType=TIMESTAMP}, #{endTime,jdbcType=TIMESTAMP}, 
-      #{status,jdbcType=INTEGER}, #{timeName,jdbcType=VARCHAR})
+    insert into sms_flash_promotion (title, start_date, end_date, 
+      status, create_time)
+    values (#{title,jdbcType=VARCHAR}, #{startDate,jdbcType=DATE}, #{endDate,jdbcType=DATE}, 
+      #{status,jdbcType=INTEGER}, #{createTime,jdbcType=TIMESTAMP})
   </insert>
   <insert id="insertSelective" parameterType="com.macro.mall.model.SmsFlashPromotion">
-    <selectKey keyProperty="id" order="AFTER" resultType="java.lang.Integer">
+    <selectKey keyProperty="id" order="AFTER" resultType="java.lang.Long">
       SELECT LAST_INSERT_ID()
     </selectKey>
     insert into sms_flash_promotion
@@ -118,34 +118,34 @@
       <if test="title != null">
         title,
       </if>
-      <if test="startTime != null">
-        start_time,
+      <if test="startDate != null">
+        start_date,
       </if>
-      <if test="endTime != null">
-        end_time,
+      <if test="endDate != null">
+        end_date,
       </if>
       <if test="status != null">
         status,
       </if>
-      <if test="timeName != null">
-        time_name,
+      <if test="createTime != null">
+        create_time,
       </if>
     </trim>
     <trim prefix="values (" suffix=")" suffixOverrides=",">
       <if test="title != null">
         #{title,jdbcType=VARCHAR},
       </if>
-      <if test="startTime != null">
-        #{startTime,jdbcType=TIMESTAMP},
+      <if test="startDate != null">
+        #{startDate,jdbcType=DATE},
       </if>
-      <if test="endTime != null">
-        #{endTime,jdbcType=TIMESTAMP},
+      <if test="endDate != null">
+        #{endDate,jdbcType=DATE},
       </if>
       <if test="status != null">
         #{status,jdbcType=INTEGER},
       </if>
-      <if test="timeName != null">
-        #{timeName,jdbcType=VARCHAR},
+      <if test="createTime != null">
+        #{createTime,jdbcType=TIMESTAMP},
       </if>
     </trim>
   </insert>
@@ -159,22 +159,22 @@
     update sms_flash_promotion
     <set>
       <if test="record.id != null">
-        id = #{record.id,jdbcType=INTEGER},
+        id = #{record.id,jdbcType=BIGINT},
       </if>
       <if test="record.title != null">
         title = #{record.title,jdbcType=VARCHAR},
       </if>
-      <if test="record.startTime != null">
-        start_time = #{record.startTime,jdbcType=TIMESTAMP},
+      <if test="record.startDate != null">
+        start_date = #{record.startDate,jdbcType=DATE},
       </if>
-      <if test="record.endTime != null">
-        end_time = #{record.endTime,jdbcType=TIMESTAMP},
+      <if test="record.endDate != null">
+        end_date = #{record.endDate,jdbcType=DATE},
       </if>
       <if test="record.status != null">
         status = #{record.status,jdbcType=INTEGER},
       </if>
-      <if test="record.timeName != null">
-        time_name = #{record.timeName,jdbcType=VARCHAR},
+      <if test="record.createTime != null">
+        create_time = #{record.createTime,jdbcType=TIMESTAMP},
       </if>
     </set>
     <if test="_parameter != null">
@@ -183,12 +183,12 @@
   </update>
   <update id="updateByExample" parameterType="map">
     update sms_flash_promotion
-    set id = #{record.id,jdbcType=INTEGER},
+    set id = #{record.id,jdbcType=BIGINT},
       title = #{record.title,jdbcType=VARCHAR},
-      start_time = #{record.startTime,jdbcType=TIMESTAMP},
-      end_time = #{record.endTime,jdbcType=TIMESTAMP},
+      start_date = #{record.startDate,jdbcType=DATE},
+      end_date = #{record.endDate,jdbcType=DATE},
       status = #{record.status,jdbcType=INTEGER},
-      time_name = #{record.timeName,jdbcType=VARCHAR}
+      create_time = #{record.createTime,jdbcType=TIMESTAMP}
     <if test="_parameter != null">
       <include refid="Update_By_Example_Where_Clause" />
     </if>
@@ -199,28 +199,28 @@
       <if test="title != null">
         title = #{title,jdbcType=VARCHAR},
       </if>
-      <if test="startTime != null">
-        start_time = #{startTime,jdbcType=TIMESTAMP},
+      <if test="startDate != null">
+        start_date = #{startDate,jdbcType=DATE},
       </if>
-      <if test="endTime != null">
-        end_time = #{endTime,jdbcType=TIMESTAMP},
+      <if test="endDate != null">
+        end_date = #{endDate,jdbcType=DATE},
       </if>
       <if test="status != null">
         status = #{status,jdbcType=INTEGER},
       </if>
-      <if test="timeName != null">
-        time_name = #{timeName,jdbcType=VARCHAR},
+      <if test="createTime != null">
+        create_time = #{createTime,jdbcType=TIMESTAMP},
       </if>
     </set>
-    where id = #{id,jdbcType=INTEGER}
+    where id = #{id,jdbcType=BIGINT}
   </update>
   <update id="updateByPrimaryKey" parameterType="com.macro.mall.model.SmsFlashPromotion">
     update sms_flash_promotion
     set title = #{title,jdbcType=VARCHAR},
-      start_time = #{startTime,jdbcType=TIMESTAMP},
-      end_time = #{endTime,jdbcType=TIMESTAMP},
+      start_date = #{startDate,jdbcType=DATE},
+      end_date = #{endDate,jdbcType=DATE},
       status = #{status,jdbcType=INTEGER},
-      time_name = #{timeName,jdbcType=VARCHAR}
-    where id = #{id,jdbcType=INTEGER}
+      create_time = #{createTime,jdbcType=TIMESTAMP}
+    where id = #{id,jdbcType=BIGINT}
   </update>
 </mapper>
