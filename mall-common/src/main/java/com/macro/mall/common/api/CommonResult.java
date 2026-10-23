@@ -107,6 +107,13 @@ public class CommonResult<T> {
         return new CommonResult<T>(ResultCode.FORBIDDEN.getCode(), ResultCode.FORBIDDEN.getMessage(), data);
     }
 
+    /**
+     * 未授权返回结果（自定义消息）
+     */
+    public static <T> CommonResult<T> forbidden(String message) {
+        return new CommonResult<T>(ResultCode.FORBIDDEN.getCode(), message, null);
+    }
+
     public long getCode() {
         return code;
     }
