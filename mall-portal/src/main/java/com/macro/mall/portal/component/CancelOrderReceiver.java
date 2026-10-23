@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  * Created by macro on 2018/9/14.
  */
 @Component
-@RabbitListener(queues = "mall.order.cancel")
+@RabbitListener(queues = "mall1.order.cancel")
 public class CancelOrderReceiver {
     private static final Logger LOGGER = LoggerFactory.getLogger(CancelOrderReceiver.class);
     @Autowired
