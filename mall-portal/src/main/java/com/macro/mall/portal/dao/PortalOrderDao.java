@@ -37,4 +37,10 @@ public interface PortalOrderDao {
      */
     int releaseSkuStockLock(@Param("itemList") List<OmsOrderItem> orderItemList);
 
+    /**
+     * 原子锁定下单商品库存（单条 SQL, lock_stock = lock_stock + quantity，
+     * 带 stock - lock_stock >= quantity 条件防超卖）
+     */
+    int lockSkuStock(@Param("itemList") List<OmsOrderItem> orderItemList);
+
 }
