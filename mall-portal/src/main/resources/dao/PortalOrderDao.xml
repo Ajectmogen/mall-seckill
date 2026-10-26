@@ -65,6 +65,17 @@
         <foreach collection="itemList" item="item" separator="," open="(" close=")">
             #{item.productSkuId}
         </foreach>
+        <!-- 🩹 下界守卫：真实库存与锁定量都不允许被扣成负数；不满足条件的行不会被更新（返回行数会少于明细行数） -->
+        AND stock >= CASE id
+        <foreach collection="itemList" item="item">
+            WHEN #{item.productSkuId} THEN #{item.productQuantity}
+        </foreach>
+        END
+        AND lock_stock >= CASE id
+        <foreach collection="itemList" item="item">
+            WHEN #{item.productSkuId} THEN #{item.productQuantity}
+        </foreach>
+        END
     </update>
     <update id="updateOrderStatus">
         update oms_order
@@ -74,6 +85,24 @@
             #{id}
         </foreach>
     </update>
+    <update id="lockSkuStock">
+        UPDATE pms_sku_stock
+        SET lock_stock = lock_stock + CASE id
+        <foreach collection="itemList" item="item">
+            WHEN #{item.productSkuId} THEN #{item.productQuantity}
+        </foreach>
+        END
+        WHERE id IN
+        <foreach collection="itemList" item="item" separator="," open="(" close=")">
+            #{item.productSkuId}
+        </foreach>
+        AND stock - lock_stock >= CASE id
+        <foreach collection="itemList" item="item">
+            WHEN #{item.productSkuId} THEN #{item.productQuantity}
+        </foreach>
+        END
+    </update>
+
     <update id="releaseSkuStockLock">
         UPDATE pms_sku_stock
         SET
@@ -87,5 +116,11 @@
         <foreach collection="itemList" item="item" separator="," open="(" close=")">
             #{item.productSkuId}
         </foreach>
+        <!-- 🩹 下界守卫：锁定量不允许被释放成负数（重复释放/数据异常时该行直接不更新） -->
+        AND lock_stock >= CASE id
+        <foreach collection="itemList" item="item">
+            WHEN #{item.productSkuId} THEN #{item.productQuantity}
+        </foreach>
+        END
     </update>
 </mapper>
