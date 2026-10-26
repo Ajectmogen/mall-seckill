@@ -70,6 +70,11 @@ public class OmsPromotionServiceImpl implements OmsPromotionService {
                         BigDecimal originalPrice = skuStock.getPrice();
                         BigDecimal reduceAmount = originalPrice.subtract(ladder.getDiscount().multiply(originalPrice));
                         cartPromotionItem.setReduceAmount(reduceAmount);
+                        //🩹 购物车价格快照缺失时回退到 SKU 原价：mall 原逻辑在此分支只设 reduceAmount、不回填 price，
+                        //   若购物车行没有 price（例如 /cart/add 只传了 productId+productSkuId+quantity）会在下单时 NPE(500)
+                        if (cartPromotionItem.getPrice() == null) {
+                            cartPromotionItem.setPrice(originalPrice);
+                        }
                         cartPromotionItem.setRealStock(skuStock.getStock()-skuStock.getLockStock());
                         cartPromotionItem.setIntegration(promotionProduct.getGiftPoint());
                         cartPromotionItem.setGrowth(promotionProduct.getGiftGrowth());
@@ -93,6 +98,10 @@ public class OmsPromotionServiceImpl implements OmsPromotionService {
                         BigDecimal originalPrice = skuStock.getPrice();
                         BigDecimal reduceAmount = originalPrice.divide(totalAmount,RoundingMode.HALF_EVEN).multiply(fullReduction.getReducePrice());
                         cartPromotionItem.setReduceAmount(reduceAmount);
+                        //🩹 同上：满减分支也不回填 price，购物车缺价格快照时回退到 SKU 原价
+                        if (cartPromotionItem.getPrice() == null) {
+                            cartPromotionItem.setPrice(originalPrice);
+                        }
                         cartPromotionItem.setRealStock(skuStock.getStock()-skuStock.getLockStock());
                         cartPromotionItem.setIntegration(promotionProduct.getGiftPoint());
                         cartPromotionItem.setGrowth(promotionProduct.getGiftGrowth());
@@ -165,6 +174,10 @@ public class OmsPromotionServiceImpl implements OmsPromotionService {
             PmsSkuStock skuStock = getOriginalPrice(promotionProduct,item.getProductSkuId());
             if(skuStock!=null){
                 cartPromotionItem.setRealStock(skuStock.getStock()-skuStock.getLockStock());
+                //🩹 无优惠分支同样不回填 price，购物车缺价格快照时回退到 SKU 原价，避免下单时 handleRealAmount 空指针
+                if (cartPromotionItem.getPrice() == null) {
+                    cartPromotionItem.setPrice(skuStock.getPrice());
+                }
             }
             cartPromotionItem.setIntegration(promotionProduct.getGiftPoint());
             cartPromotionItem.setGrowth(promotionProduct.getGiftGrowth());
