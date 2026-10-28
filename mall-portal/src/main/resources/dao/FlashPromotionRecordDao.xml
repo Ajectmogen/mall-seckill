@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.macro.mall.portal.dao.FlashPromotionRecordDao">
+
+    <resultMap id="RecordResultMap" type="com.macro.mall.portal.domain.FlashPromotionRecord">
+        <id column="id" jdbcType="BIGINT" property="id"/>
+        <result column="relation_id" jdbcType="BIGINT" property="relationId"/>
+        <result column="member_id" jdbcType="BIGINT" property="memberId"/>
+        <result column="product_id" jdbcType="BIGINT" property="productId"/>
+        <result column="product_sku_id" jdbcType="BIGINT" property="productSkuId"/>
+        <result column="order_id" jdbcType="BIGINT" property="orderId"/>
+        <result column="order_sn" jdbcType="VARCHAR" property="orderSn"/>
+        <result column="quantity" jdbcType="INTEGER" property="quantity"/>
+        <result column="status" jdbcType="INTEGER" property="status"/>
+        <result column="error_msg" jdbcType="VARCHAR" property="errorMsg"/>
+        <result column="retry_count" jdbcType="INTEGER" property="retryCount"/>
+        <result column="create_time" jdbcType="TIMESTAMP" property="createTime"/>
+    </resultMap>
+
+    <resultMap id="RelationCacheResultMap" type="com.macro.mall.portal.domain.FlashPromotionRelationCache">
+        <id column="relationId" jdbcType="BIGINT" property="relationId"/>
+        <result column="flashPromotionId" jdbcType="BIGINT" property="flashPromotionId"/>
+        <result column="flashPromotionSessionId" jdbcType="BIGINT" property="flashPromotionSessionId"/>
+        <result column="productId" jdbcType="BIGINT" property="productId"/>
+        <result column="productSkuId" jdbcType="BIGINT" property="productSkuId"/>
+        <result column="flashPromotionPrice" jdbcType="DECIMAL" property="flashPromotionPrice"/>
+        <result column="flashPromotionCount" jdbcType="INTEGER" property="flashPromotionCount"/>
+        <result column="flashPromotionLimit" jdbcType="INTEGER" property="flashPromotionLimit"/>
+        <result column="flashPromotionTitle" jdbcType="VARCHAR" property="flashPromotionTitle"/>
+        <result column="sessionStartTime" jdbcType="VARCHAR" property="sessionStartTime"/>
+        <result column="sessionEndTime" jdbcType="VARCHAR" property="sessionEndTime"/>
+    </resultMap>
+
+    <!-- 秒杀关系的公共列，product_sku_id 为秒杀 v1 新增字段；场次时间统一取 HH:mm:ss 字符串，避免 Date 与 TIME 列比较的日期干扰 -->
+    <sql id="relationColumns">
+        r.id                             AS relationId,
+        r.flash_promotion_id             AS flashPromotionId,
+        r.flash_promotion_session_id     AS flashPromotionSessionId,
+        r.product_id                     AS productId,
+        r.product_sku_id                 AS productSkuId,
+        r.flash_promotion_price          AS flashPromotionPrice,
+        r.flash_promotion_count          AS flashPromotionCount,
+        r.flash_promotion_limit          AS flashPromotionLimit,
+        p.title                          AS flashPromotionTitle,
+        DATE_FORMAT(s.start_time, '%H:%i:%s') AS sessionStartTime,
+        DATE_FORMAT(s.end_time, '%H:%i:%s')   AS sessionEndTime
+    </sql>
+
+    <insert id="insert" parameterType="com.macro.mall.portal.domain.FlashPromotionRecord" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sms_flash_promotion_record (relation_id, member_id, product_id, product_sku_id, quantity, status, create_time)
+        VALUES (#{relationId}, #{memberId}, #{productId}, #{productSkuId}, #{quantity}, #{status}, now())
+    </insert>
+
+    <select id="selectByRelationIdAndMemberId" resultMap="RecordResultMap">
+        SELECT * FROM sms_flash_promotion_record
+        WHERE relation_id = #{relationId} AND member_id = #{memberId}
+    </select>
+
+    <select id="selectById" resultMap="RecordResultMap">
+        SELECT * FROM sms_flash_promotion_record
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByOrderId" resultMap="RecordResultMap">
+        SELECT * FROM sms_flash_promotion_record
+        WHERE order_id = #{orderId}
+        LIMIT 1
+    </select>
+
+    <!--
+        占用名额口径（v2 状态机）：status IN (0排队中,10建单中,1待支付,4已支付)。
+        2已取消 / 3建单失败 都不占名额，所以预热重算 remain、对账、重建买家集合时都必须用这个口径。
+    -->
+    <select id="sumQuantityByRelationId" resultType="java.lang.Integer">
+        SELECT IFNULL(SUM(quantity), 0) FROM sms_flash_promotion_record
+        WHERE relation_id = #{relationId} AND status IN (0, 10, 1, 4)
+    </select>
+
+    <select id="countByRelationId" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM sms_flash_promotion_record
+        WHERE relation_id = #{relationId} AND status IN (0, 10, 1, 4)
+    </select>
+
+    <!-- 已购会员ID列表：预热时用来重建 Redis 的已购集合，保证 key 过期重建后前置拦截依然有效 -->
+    <select id="selectMemberIdsByRelationId" resultType="java.lang.Long">
+        SELECT member_id FROM sms_flash_promotion_record
+        WHERE relation_id = #{relationId} AND status IN (0, 10, 1, 4)
+    </select>
+
+    <!-- 异步建单前 CAS 领取：只有排队中(0)的记录能进入建单中(10)，重复消息影响行数为 0 -->
+    <update id="updateStatusById">
+        UPDATE sms_flash_promotion_record
+        SET status = #{toStatus}
+        WHERE id = #{id} AND status = #{fromStatus}
+    </update>
+
+    <!-- 建单成功：回写订单信息并把状态推进到 1（待支付） -->
+    <update id="updateOrderInfoWithStatus">
+        UPDATE sms_flash_promotion_record
+        SET order_id = #{orderId}, order_sn = #{orderSn}, status = #{status}
+        WHERE id = #{id} AND status IN (0, 10)
+    </update>
+
+    <!-- 建单失败：置 3（建单失败）+ 失败原因 + 重试次数+1；带 fromStatus 时要求状态未被并发改动（幂等） -->
+    <update id="updateStatusAndError">
+        UPDATE sms_flash_promotion_record
+        SET status = #{status},
+            error_msg = #{errorMsg},
+            retry_count = retry_count + 1
+        WHERE id = #{id}
+        <if test="fromStatus != null">
+            AND status = #{fromStatus}
+        </if>
+    </update>
+
+    <!-- 兜底扫描：排队超过 N 秒仍是 status=0 的记录 -->
+    <select id="selectIdsByStatusAndCreateTimeBefore" resultType="java.lang.Long">
+        SELECT id FROM sms_flash_promotion_record
+        WHERE status = #{status} AND create_time &lt; #{before}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="updateStatusByOrderId">
+        UPDATE sms_flash_promotion_record
+        SET status = #{status}
+        WHERE order_id = #{orderId} AND (status IS NULL OR status &lt;&gt; #{status})
+    </update>
+
+    <!-- 建单失败(3)后允许重新抢：CAS 回到排队中(0)，清空失败原因、retry_count+1、create_time 刷新为当前时间 -->
+    <update id="resetToQueued">
+        UPDATE sms_flash_promotion_record
+        SET status = 0,
+            error_msg = NULL,
+            retry_count = retry_count + 1,
+            create_time = NOW()
+        WHERE id = #{id} AND status = 3
+    </update>
+
+    <select id="selectRelationById" resultMap="RelationCacheResultMap">
+        SELECT
+        <include refid="relationColumns"/>
+        FROM sms_flash_promotion_product_relation r
+        LEFT JOIN sms_flash_promotion p ON r.flash_promotion_id = p.id
+        LEFT JOIN sms_flash_promotion_session s ON r.flash_promotion_session_id = s.id
+        WHERE r.id = #{relationId}
+    </select>
+
+    <select id="selectRelations" resultMap="RelationCacheResultMap">
+        SELECT
+        <include refid="relationColumns"/>
+        FROM sms_flash_promotion_product_relation r
+        LEFT JOIN sms_flash_promotion p ON r.flash_promotion_id = p.id
+        LEFT JOIN sms_flash_promotion_session s ON r.flash_promotion_session_id = s.id
+        WHERE r.flash_promotion_id = #{flashPromotionId} AND r.flash_promotion_session_id = #{sessionId}
+        ORDER BY r.sort ASC, r.id ASC
+    </select>
+
+    <!--
+        当前生效的秒杀关系：活动启用(p.status=1) + 场次启用(s.status=1)
+        + 当前日期落在活动起止日期内 + 当前时分秒落在场次时间段内（兼容跨零点场次，如 22:00~02:00）
+        时间统一用 HH:mm:ss 字符串与 TIME 列比较，避免 java.util.Date 与 TIME 列比较时的日期部分干扰。
+    -->
+    <select id="selectActiveRelations" resultMap="RelationCacheResultMap">
+        SELECT
+        <include refid="relationColumns"/>
+        FROM sms_flash_promotion_product_relation r
+        INNER JOIN sms_flash_promotion p ON r.flash_promotion_id = p.id
+        INNER JOIN sms_flash_promotion_session s ON r.flash_promotion_session_id = s.id
+        WHERE p.status = 1
+        AND s.status = 1
+        AND p.start_date &lt;= #{currentDate}
+        AND p.end_date &gt;= #{currentDate}
+        AND (
+        (s.start_time &lt;= s.end_time AND #{currentTime} &gt;= s.start_time AND #{currentTime} &lt;= s.end_time)
+        OR
+        (s.start_time &gt; s.end_time AND (#{currentTime} &gt;= s.start_time OR #{currentTime} &lt;= s.end_time))
+        )
+        ORDER BY r.id ASC
+    </select>
+</mapper>
