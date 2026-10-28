@@ -1,11 +1,18 @@
-# Maven #
+# Maven
 target/
 
-# IDEA #
+# IDEA
 .idea/
 *.iml
 
-# Eclipse #
+# Eclipse
 .settings/
 .classpath
 .project
+
+# 本地实验产物 / 个人材料（不入库）
+.runcheck/
+.work*/
+.temp/
+*.docx
+mall-1-优化方案与实测报告.md
