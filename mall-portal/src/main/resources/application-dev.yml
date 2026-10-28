@@ -1,11 +1,11 @@
 server:
-  port: 8085
+  port: 8185 # mall-1 副本，端口 +100
 
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/mall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false
+    url: jdbc:mysql://localhost:3306/mall1?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false
     username: root
-    password: root
+    password: 123456
     druid:
       initial-size: 5 #连接池初始化大小
       min-idle: 10 #最小空闲连接数
@@ -19,10 +19,10 @@ spring:
     mongodb:
       host: localhost
       port: 27017
-      database: mall-port
+      database: mall-port1 # mall-1 副本隔离
     redis:
       host: localhost # Redis服务器地址
-      database: 0 # Redis数据库索引（默认为0）
+      database: 1 # mall-1 用 db1，与原项目(db0)隔离
       port: 6379 # Redis服务器连接端口
       password: # Redis服务器连接密码（默认为空）
       timeout: 300ms # 连接超时时间（毫秒）
@@ -37,6 +37,11 @@ logging:
   level:
     root: info
     com.macro.mall: debug
+
+# 秒杀 v2：异步建单开关（true=Lua预扣+排队落记录+MQ异步建单+结果轮询；false=v1 同步建单，压测对比用）
+mall:
+  flash:
+    async-create: true
 
 logstash:
   host: localhost
