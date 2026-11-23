@@ -10,9 +10,17 @@ target/
 .classpath
 .project
 
-# 本地实验产物 / 个人材料（不入库）
+# 本地实验产物 / 个人辅助文件（不入库，防止误提交）
 .runcheck/
 .work*/
 .temp/
+.vscode/
 *.docx
-mall-1-优化方案与实测报告.md
+
+# 运行日志 / JVM 崩溃转储 / 本地探测残留
+*.log
+hs_err_pid*
+replay_pid*
+BOOT-INF/
+_probe*
+_probe*

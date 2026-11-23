@@ -10,6 +10,30 @@
   <a href="https://gitee.com/macrozheng/mall"><img src="http://macro-oss.oss-cn-shenzhen.aliyuncs.com/mall/badge/%E7%A0%81%E4%BA%91-%E9%A1%B9%E7%9B%AE%E5%9C%B0%E5%9D%80-orange.svg" alt="码云"></a>
 </p>
 
+## 关于本仓库（在原版 mall 上的二次开发）
+
+本仓库基于 [macrozheng/mall](https://github.com/macrozheng/mall) 的 `master` 分支（Spring Boot 3.5 + JDK 17）。**原作者贡献了绝大部分业务代码**，本仓库在此基础上做了一次面向高并发场景的专项优化，并把验证过程整理成了可复现的文档。
+
+### 做了什么
+
+| 方向 | 内容 |
+|---|---|
+| 超卖 | 下单扣库存由"先查再扣"改为单条条件 `UPDATE`，判断与扣减在同一条语句内完成，用影响行数判定是否成功 |
+| 幂等 | 支付结果更新、用户取消、超时取消三条状态流转全部改为带 `status` 条件的 CAS，`updated == 0` 直接返回 |
+| 事务边界 | 下单补全事务，延迟取消消息改到事务 `afterCommit` 后发送，避免"消息发出但事务回滚" |
+| 秒杀 v1 | Redis Lua 原子预扣（库存 + 一人一单）、场次预热与库存对账定时任务、秒杀专用延迟取消队列 |
+| 秒杀 v2 | 同步建单改为 MQ 异步建单：排队记录六状态机（0 排队 / 10 建单中 / 1 待支付 / 2 已取消 / 3 建单失败 / 4 已支付）+ 三条兜底（定时重投、超时判失败、死信兜底），都先归还名额再置状态 |
+| 环境隔离 | 库名 `mall1`、端口 +100（admin 8181 / portal 8185 / search 8186）、Redis db1、MQ vhost `/mall`，可与原版同时运行 |
+
+### 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/优化与实测报告.md](docs/优化与实测报告.md) | 逐项改动说明 + 实测数据：下单链路 36 项验证、5 档并发压测 + JFR 火焰定位、秒杀 v1/v2 对比 |
+| [docs/ES本地部署与验证.md](docs/ES本地部署与验证.md) | `mall-search` 接入 Elasticsearch 8.18.8 + IK 的配置、接口、本地跑通步骤与踩过的坑 |
+
+> `.runcheck/` 是本地验证脚本与原始数据目录（含 ES 运行包、JFR 记录、压测原始输出），体积较大，不随仓库提交；文档里引用的数字均出自该目录下的原始文件。
+
 ## 友情提示
 
 > 1. **快速体验项目**：[在线访问地址](https://www.macrozheng.com/admin/index.html) 。
