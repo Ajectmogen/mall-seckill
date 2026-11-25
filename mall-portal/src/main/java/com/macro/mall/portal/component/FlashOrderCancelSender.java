@@ -10,22 +10,14 @@ import org.springframework.amqp.core.MessagePostProcessor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-/**
- * 秒杀订单取消消息的发送者
- * <p>
- * 与普通订单取消消息（CancelOrderSender）使用完全独立的交换机/队列，
- * 避免秒杀场景的高并发消息把普通订单的取消消息堵在同一个队列里（队头阻塞）。
- * Created by mall-1 seckill v1.
- */
+/** 秒杀延迟取消消息发送者，与普通订单取消队列隔离，避免队头阻塞 */
 @Component
 public class FlashOrderCancelSender {
     private static final Logger LOGGER = LoggerFactory.getLogger(FlashOrderCancelSender.class);
     @Autowired
     private AmqpTemplate amqpTemplate;
 
-    /**
-     * 发送延迟消息，delayTimes 毫秒后进入秒杀取消队列
-     */
+    /** 发送延迟消息，delayTimes 毫秒后进入秒杀取消队列 */
     public void sendMessage(Long orderId, final long delayTimes) {
         //给秒杀延迟队列发送消息
         amqpTemplate.convertAndSend(QueueEnum.QUEUE_TTL_FLASH_ORDER_CANCEL.getExchange(), QueueEnum.QUEUE_TTL_FLASH_ORDER_CANCEL.getRouteKey(), orderId, new MessagePostProcessor() {

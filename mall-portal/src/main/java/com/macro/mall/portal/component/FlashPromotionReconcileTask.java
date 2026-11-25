@@ -11,24 +11,14 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * 秒杀库存对账定时器
- * <p>
- * 每5分钟比对「Redis 剩余库存 + Redis 买家数」与「数据库口径：flash_promotion_count - 未取消成交记录数量」，
- * 不一致只打 WARN 明细，**不做自动修复**：Redis 扣减与成交记录落库之间存在毫秒级时间窗口，
- * 瞬时不一致属于正常现象，自动修复容易误伤正在下单的请求（下一分钟的预热会按数据库口径自然纠偏）。
- * Created by mall-1 seckill v1.
- */
+/** 每 5 分钟对账 Redis 与数据库口径，差异只打日志，不自动修复 */
 @Component
 public class FlashPromotionReconcileTask {
     private final Logger LOGGER = LoggerFactory.getLogger(FlashPromotionReconcileTask.class);
     @Autowired
     private FlashPromotionSeckillService flashPromotionSeckillService;
 
-    /**
-     * cron表达式：Seconds Minutes Hours DayofMonth Month DayofWeek [Year]
-     * 每5分钟执行一次
-     */
+    /** cron表达式：Seconds Minutes Hours DayofMonth Month DayofWeek [Year] 每5分钟执行一次 */
     @Scheduled(cron = "0 0/5 * * * ?")
     private void reconcileFlashPromotion() {
         List<FlashPromotionReconcileItem> items = flashPromotionSeckillService.reconcile();

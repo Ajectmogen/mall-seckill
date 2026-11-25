@@ -8,18 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/**
- * 秒杀建单兜底扫描任务（v2）
- * <p>
- * 解决「消息丢了」的问题（MQ 宕机、发送失败、消息被误删）：
- * <ol>
- *   <li>每 10 秒扫描 status=0（排队中）且 create_time 早于 15 秒前的记录，重投建单消息；
- *       重投是幂等的（消费者 CAS 0->10 只有一次能成功），所以重投无害；</li>
- *   <li>把超过 5 分钟仍是 status=0 的记录置 3（建单失败）并归还 Redis 名额，避免永久卡在"排队中"。</li>
- * </ol>
- * 同步模式（mall.flash.async-create=false）没有排队记录，任务直接跳过。
- * Created by mall-1 seckill v2.
- */
+/** 兜底扫描：重投超时未消费的排队记录，超时过久则判失败并归还名额 */
 @Component
 public class FlashOrderCreateSweeperTask {
     private final Logger LOGGER = LoggerFactory.getLogger(FlashOrderCreateSweeperTask.class);

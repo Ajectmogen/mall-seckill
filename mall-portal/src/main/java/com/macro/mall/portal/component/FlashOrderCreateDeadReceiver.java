@@ -8,14 +8,7 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-/**
- * 秒杀异步建单死信队列的接收者（v2）
- * <p>
- * 建单队列配置了 x-dead-letter-exchange/x-dead-letter-routing-key 指向 mall1.flash.dead：
- * 消费者若把消息拒绝（requeue=false）或消息过期，就会落到这里。这里把记录置 3（建单失败）并归还 Redis 名额，
- * 保证死信不会变成「记录永远排队中」的黑洞。
- * Created by mall-1 seckill v2.
- */
+/** 秒杀异步建单死信消费者 */
 @Component
 @RabbitListener(queues = "mall1.flash.dead")
 public class FlashOrderCreateDeadReceiver {

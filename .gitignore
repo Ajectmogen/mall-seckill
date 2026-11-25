@@ -10,7 +10,7 @@ target/
 .classpath
 .project
 
-# 本地实验产物 / 个人辅助文件（不入库，防止误提交）
+# 本地实验产物与临时目录（不入库）
 .runcheck/
 .work*/
 .temp/

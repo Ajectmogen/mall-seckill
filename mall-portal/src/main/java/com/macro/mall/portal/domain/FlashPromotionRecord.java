@@ -7,12 +7,7 @@ import lombok.Setter;
 import java.io.Serializable;
 import java.util.Date;
 
-/**
- * 秒杀成交记录（对应 sms_flash_promotion_record 表）
- * <p>
- * 该表没有进 mall-mbg，因此在 mall-portal 内以自定义 Dao 的方式访问。
- * Created by mall-1 seckill v1.
- */
+/** 秒杀成交记录，对应 sms_flash_promotion_record 表 */
 @Getter
 @Setter
 public class FlashPromotionRecord implements Serializable {

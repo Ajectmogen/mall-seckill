@@ -6,13 +6,7 @@ import lombok.Setter;
 
 import java.io.Serializable;
 
-/**
- * 秒杀对账明细
- * <p>
- * 用于 {@code FlashPromotionReconcileTask} 比对「Redis 剩余库存/买家数」与「数据库口径」，
- * 不一致时只打 WARN 日志、不做自动修复（避免误伤正常在途请求）。
- * Created by mall-1 seckill v1.
- */
+/** 秒杀库存对账明细，只记录差异 */
 @Getter
 @Setter
 public class FlashPromotionReconcileItem implements Serializable {

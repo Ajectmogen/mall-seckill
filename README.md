@@ -1,46 +1,18 @@
-# mall
+# mall1：mall 电商系统的并发改造与秒杀实践
 
-<p>
-  <a href="#公众号"><img src="http://macro-oss.oss-cn-shenzhen.aliyuncs.com/mall/badge/%E5%85%AC%E4%BC%97%E5%8F%B7-macrozheng-blue.svg" alt="公众号"></a>
-  <a href="#公众号"><img src="http://macro-oss.oss-cn-shenzhen.aliyuncs.com/mall/badge/%E4%BA%A4%E6%B5%81-%E5%BE%AE%E4%BF%A1%E7%BE%A4-2BA245.svg" alt="交流"></a>
-  <a href="https://github.com/macrozheng/mall-learning"><img src="http://macro-oss.oss-cn-shenzhen.aliyuncs.com/mall/badge/%E5%AD%A6%E4%B9%A0%E6%95%99%E7%A8%8B-mall--learning-green.svg" alt="学习教程"></a>
-  <a href="https://github.com/macrozheng/mall-swarm"><img src="http://macro-oss.oss-cn-shenzhen.aliyuncs.com/mall/badge/Cloud%E7%89%88%E6%9C%AC-mall--swarm-brightgreen.svg" alt="SpringCloud版本"></a>
-  <a href="https://github.com/macrozheng/mall-admin-web"><img src="https://macro-oss.oss-cn-shenzhen.aliyuncs.com/mall/badge/%E5%90%8E%E5%8F%B0%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F-mall--admin--web-green.svg" alt="后台管理系统"></a>
-  <a href="https://github.com/macrozheng/mall-app-web"><img src="https://macro-oss.oss-cn-shenzhen.aliyuncs.com/mall/badge/%E5%89%8D%E5%8F%B0%E5%95%86%E5%9F%8E%E9%A1%B9%E7%9B%AE-mall--app--web-green.svg" alt="前台商城项目"></a>
-  <a href="https://gitee.com/macrozheng/mall"><img src="http://macro-oss.oss-cn-shenzhen.aliyuncs.com/mall/badge/%E7%A0%81%E4%BA%91-%E9%A1%B9%E7%9B%AE%E5%9C%B0%E5%9D%80-orange.svg" alt="码云"></a>
-</p>
+基于 [macrozheng/mall](https://github.com/macrozheng/mall) 的 `master` 分支（Spring Boot 3.5 + JDK 17）改的。原项目代码、文档和素材版权归原作者 macrozheng 所有，本仓库沿用其 Apache-2.0 许可证。业务代码绝大部分是原作者的，我在上面做了一轮并发安全方面的修补，另外加了一个秒杀模块。
 
-## 关于本仓库（在原版 mall 上的二次开发）
+- 下单扣库存原来是先查再扣，并发下会超卖。改成一条带 `stock >= #{quantity}` 条件的 UPDATE，用影响行数判断扣没扣动。
+- 支付回调、用户取消、超时取消三条状态流转都加了 `status` 条件，`updated == 0` 就直接返回，不再重复扣库存、重复加积分。
+- 延迟取消消息改成事务提交之后再发，另外留了定时任务兜底。
+- 秒杀用 Redis + Lua 预扣库存和一人一单，先做了一版同步建单，后来改成 MQ 异步建单（排队记录 + 状态机 + 超时/死信/定时扫描三条兜底）。
+- 为了和原版同时跑，库名改成 `mall1`、端口整体 +100（admin 8181 / portal 8185 / search 8186）、Redis 用 db1、MQ 用 vhost `/mall`。
 
-本仓库基于 [macrozheng/mall](https://github.com/macrozheng/mall) 的 `master` 分支（Spring Boot 3.5 + JDK 17）。**原作者贡献了绝大部分业务代码**，本仓库在此基础上做了一次面向高并发场景的专项优化，并把验证过程整理成了可复现的文档。
+改完之后的验证过程和压测数据记在 [docs/优化与实测报告.md](docs/优化与实测报告.md)，ES 的接入记录在 [docs/ES本地部署与验证.md](docs/ES本地部署与验证.md)。JFR、JMeter 原始输出和验证脚本留在本地，体积太大没有提交。
 
-### 做了什么
+## 原项目说明
 
-| 方向 | 内容 |
-|---|---|
-| 超卖 | 下单扣库存由"先查再扣"改为单条条件 `UPDATE`，判断与扣减在同一条语句内完成，用影响行数判定是否成功 |
-| 幂等 | 支付结果更新、用户取消、超时取消三条状态流转全部改为带 `status` 条件的 CAS，`updated == 0` 直接返回 |
-| 事务边界 | 下单补全事务，延迟取消消息改到事务 `afterCommit` 后发送，避免"消息发出但事务回滚" |
-| 秒杀 v1 | Redis Lua 原子预扣（库存 + 一人一单）、场次预热与库存对账定时任务、秒杀专用延迟取消队列 |
-| 秒杀 v2 | 同步建单改为 MQ 异步建单：排队记录六状态机（0 排队 / 10 建单中 / 1 待支付 / 2 已取消 / 3 建单失败 / 4 已支付）+ 三条兜底（定时重投、超时判失败、死信兜底），都先归还名额再置状态 |
-| 环境隔离 | 库名 `mall1`、端口 +100（admin 8181 / portal 8185 / search 8186）、Redis db1、MQ vhost `/mall`，可与原版同时运行 |
-
-### 文档
-
-| 文档 | 内容 |
-|---|---|
-| [docs/优化与实测报告.md](docs/优化与实测报告.md) | 逐项改动说明 + 实测数据：下单链路 36 项验证、5 档并发压测 + JFR 火焰定位、秒杀 v1/v2 对比 |
-| [docs/ES本地部署与验证.md](docs/ES本地部署与验证.md) | `mall-search` 接入 Elasticsearch 8.18.8 + IK 的配置、接口、本地跑通步骤与踩过的坑 |
-
-> `.runcheck/` 是本地验证脚本与原始数据目录（含 ES 运行包、JFR 记录、压测原始输出），体积较大，不随仓库提交；文档里引用的数字均出自该目录下的原始文件。
-
-## 友情提示
-
-> 1. **快速体验项目**：[在线访问地址](https://www.macrozheng.com/admin/index.html) 。
-> 2. **全套学习教程**：[《mall学习教程》](https://www.macrozheng.com) 。
-> 3. **视频教程**：[《mall视频教程》](https://www.macrozheng.com/mall/catalog/mall_video.html) 。
-> 4. **微服务版本**：基于Spring Cloud Alibaba的项目：[mall-swarm](https://github.com/macrozheng/mall-swarm) 。
-> 5. **分支说明**：`master`分支基于Spring Boot 3.5+JDK 17，`dev-v2`分支基于Spring Boot 2.7+JDK 8。
+以下内容来自上游项目的 README，保留技术选型、模块结构和环境搭建步骤，便于对照。
 
 ## 前言
 
@@ -225,14 +197,6 @@ mall
 - 读写分离解决方案请参考：[你还在代码里做读写分离么，试试这个中间件吧](https://www.macrozheng.com/project/gaea.html);
 - Redis集群解决方案请参考：[Docker环境下秒建Redis集群](https://www.macrozheng.com/blog/redis_cluster.html) 。
 
-## 公众号
-
-加微信群交流，关注公众号「**macrozheng**」，回复「**加群**」即可。
-
-![公众号图片](./document/resource/qrcode_for_macrozheng_258.jpg)
-
 ## 许可证
 
-[Apache License 2.0](https://github.com/macrozheng/mall/blob/master/LICENSE)
-
-Copyright (c) 2018-2026 macrozheng
+沿用上游项目的 [Apache License 2.0](./LICENSE)，Copyright (c) 2018-2026 macrozheng。本仓库新增部分同样按 Apache-2.0 发布。

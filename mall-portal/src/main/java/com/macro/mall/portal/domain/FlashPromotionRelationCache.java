@@ -7,13 +7,7 @@ import lombok.Setter;
 import java.io.Serializable;
 import java.math.BigDecimal;
 
-/**
- * 秒杀关系缓存对象
- * <p>
- * 作为 Redis key {@code mall1:seckill:relation:{relationId}} 的 JSON 值，
- * 下单时优先读它拿 productId/productSkuId/秒杀价/秒杀数量，**价格只信任服务端这份数据**，绝不使用前端传入的价格。
- * Created by mall-1 seckill v1.
- */
+/** 秒杀关系缓存，写入 mall1:seckill:relation:{relationId}；价格只取服务端这份数据 */
 @Getter
 @Setter
 public class FlashPromotionRelationCache implements Serializable {

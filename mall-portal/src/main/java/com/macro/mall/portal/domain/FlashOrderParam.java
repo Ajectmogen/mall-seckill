@@ -4,10 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
 
-/**
- * 秒杀下单请求参数
- * Created by mall-1 seckill v1.
- */
+/** 秒杀下单请求参数 */
 @Getter
 @Setter
 public class FlashOrderParam {

@@ -3,7 +3,7 @@
 -- 执行方式：mysql -uroot -p<password> --default-character-set=utf8mb4 -N -B mall1 < document/sql/seckill.sql
 -- 说明：
 --   0) 必须带 --default-character-set=utf8mb4：Windows 版 mysql 客户端默认按 GBK 解释脚本文件字节，
---      否则本文件里的中文 COMMENT 会被双重编码成乱码（修复语句见本目录下执行记录：对相关列/表重刷 COMMENT）；
+--      否则本文件里的中文 COMMENT 会被双重编码成乱码；
 --   1) 若报 "Duplicate column name 'product_sku_id'" 说明脚本已执行过，直接跳过即可；
 --   2) sms_flash_promotion_record 是秒杀成交记录表，uk_relation_member 是
 --      「同一场次同一商品同一会员只能抢一次」的数据库侧最终兜底（Redis 侧的 buyers set 只是前置拦截）；

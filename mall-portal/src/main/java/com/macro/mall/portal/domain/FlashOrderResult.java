@@ -7,10 +7,7 @@ import lombok.Setter;
 import java.math.BigDecimal;
 import java.util.Date;
 
-/**
- * 秒杀下单结果 / 秒杀结果查询返回对象
- * Created by mall-1 seckill v1.
- */
+/** 秒杀下单结果 / 秒杀结果查询返回对象 */
 @Getter
 @Setter
 public class FlashOrderResult {

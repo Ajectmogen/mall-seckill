@@ -62,63 +62,28 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 秒杀（限时购）下单Service实现
- * <p>
- * 三层防超卖：
- * <ol>
- *   <li>Redis + Lua 原子预扣（前置拦截，挡住绝大多数并发流量）；</li>
- *   <li>sms_flash_promotion_record 的 uk_relation_member 唯一键（一人一场次一单，数据库最终防线）；</li>
- *   <li>pms_sku_stock 的原子扣减 lockSkuStock（真实库存兜底，扣不动就回滚）。</li>
- * </ol>
- * 说明：落库环节使用编程式事务 TransactionTemplate 而非 @Transactional —— 锁库存需要用影响行数判断失败，
- * 方法内自行 catch 异常时 Spring 声明式事务不会回滚，会导致「订单写了一半」的脏数据，因此显式控制事务边界。
- * Created by mall-1 seckill v1.
+ * 秒杀下单。防超卖有三层：Redis+Lua 预扣挡量、uk_relation_member 保一人一单、lockSkuStock 兜底。
+ * 落库用 TransactionTemplate 而不是 @Transactional：扣库存要靠影响行数判失败，
+ * 方法里 catch 了异常声明式事务不会回滚，会把订单写一半。
  */
 @Service
 public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillService {
     private static final Logger LOGGER = LoggerFactory.getLogger(FlashPromotionSeckillServiceImpl.class);
 
-    /**
-     * 秒杀Redis key前缀：按约定使用固定字面量（不跟随 redis.database=mall 的配置），
-     * 便于压测脚本/运维按 mall1:seckill:* 直接核对。
-     */
     private static final String SECKILL_KEY_PREFIX = "mall1:seckill:";
-    /**
-     * 剩余库存（String）
-     */
     private static final String STOCK_KEY_PREFIX = SECKILL_KEY_PREFIX + "stock:";
-    /**
-     * 已购会员集合（Set）
-     */
     private static final String BUYERS_KEY_PREFIX = SECKILL_KEY_PREFIX + "buyers:";
-    /**
-     * 秒杀关系缓存（String，JSON）
-     */
     private static final String RELATION_KEY_PREFIX = SECKILL_KEY_PREFIX + "relation:";
 
-    /**
-     * 订单号中的订单来源/支付方式（沿用普通订单的编码：1->app订单、1->支付宝）
-     */
     private static final int FLASH_ORDER_SOURCE_TYPE = 1;
     private static final int FLASH_ORDER_PAY_TYPE = 1;
 
-    /**
-     * 库存/买家key的最小TTL（秒）：场次已结束时不让key长期驻留，否则场次结束后仍可能下单
-     */
     private static final long MIN_KEY_TTL_SECONDS = 300L;
 
-    /**
-     * 读不到 oms_order_setting.flash_order_overtime 时的兜底超时分钟数
-     */
     private static final int DEFAULT_FLASH_ORDER_OVERTIME_MINUTES = 60;
 
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
 
-    /**
-     * 秒杀成交记录状态机（v2）：0排队中（已扣Redis名额、消息未消费）→ 10建单中（消费者CAS领取）
-     * → 1待支付（建单成功）→ 2已取消 / 4已支付；3建单失败（名额已还回Redis，可重新抢）。
-     * 占用名额口径：0/10/1/4；2与3都不占名额。
-     */
     private static final int STATUS_QUEUED = 0;
     private static final int STATUS_CREATING = 10;
     private static final int STATUS_UNPAID = 1;
@@ -126,19 +91,10 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
     private static final int STATUS_CREATE_FAILED = 3;
     private static final int STATUS_PAID = 4;
 
-    /**
-     * 兜底扫描：排队中的记录超过该秒数仍未建单则重投MQ消息
-     */
     private static final int SWEEP_RESEND_SECONDS = 15;
 
-    /**
-     * 兜底扫描：排队中的记录超过该分钟数仍未建单则直接判失败并归还Redis名额（避免永久卡在排队中）
-     */
     private static final int SWEEP_TIMEOUT_MINUTES = 5;
 
-    /**
-     * 兜底扫描每次最多处理的记录数
-     */
     private static final int SWEEP_BATCH_SIZE = 200;
 
     @Autowired
@@ -165,15 +121,10 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
     private FlashOrderCancelSender flashOrderCancelSender;
     @Autowired
     private FlashOrderCreateSender flashOrderCreateSender;
-    /**
-     * 秒杀异步建单开关（v2）：true=Lua预扣+排队落记录+MQ异步建单；false=v1 同步建单（压测对比用）
-     */
+    /** 秒杀异步建单开关（v2）：true=Lua预扣+排队落记录+MQ异步建单；false=v1 同步建单（压测对比用） */
     @Value("${mall.flash.async-create:true}")
     private boolean asyncCreate;
-    /**
-     * 必须使用 Spring Boot 自带的 StringRedisTemplate（String 序列化），
-     * 不能用 mall-common 的 RedisService（Jackson 值序列化会把 Lua 参数变成带引号的 JSON，tonumber 直接报错）
-     */
+    // RedisService 用 Jackson 序列化，和 Lua 脚本读写的字符串值对不上，这里单独用 StringRedisTemplate
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
     @Autowired
@@ -228,17 +179,8 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return count;
     }
 
-    /**
-     * 预热单条秒杀关系：
-     * 1) 库存 key 只在**不存在**时按数据库口径建立：剩余库存 = flash_promotion_count - 占用名额的成交记录数量之和
-     *    （v2 占用名额口径：status IN (0排队中,10建单中,1待支付,4已支付)；2已取消与3建单失败都不占名额）；
-     * 2) 已购会员集合只在「库存 key 是新建的」或「集合本身不存在」时按数据库口径重建（同一占用名额口径）；
-     * 3) 缓存秒杀关系 JSON，下单时直接取价格/SKU，不必每单回源数据库。
-     * 注意：抢购进行中**绝不做覆盖写**。Redis 扣减与成交记录落库之间有毫秒级窗口，若此处无条件覆盖写，
-     * 就会把「已在 Redis 扣减、但还没提交到数据库」的那几件库存还回去，让别的会员多抢 —— 那是真实超发。
-     * 所以库存 key 一旦建立就以 Redis 的原子扣减为准；只有 key 丢失时（应用重启、Redis 抖动、场次 key 过期）
-     * 才按数据库口径重建，重建本身也是原子的 SETNX，不会覆盖并发抢购中的扣减结果。
-     */
+    // 预热：库存 = 总量 - 已占用名额；已购集合和库存 key 只在不存在时重建，
+    // 关系数据缓存进 Redis，下单时不再回源。
     private void preheatRelation(FlashPromotionRelationCache relation) {
         Long relationId = relation.getRelationId();
         long ttl = resolveTtlSeconds(relation);
@@ -280,7 +222,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         UmsMember member = umsMemberService.getCurrentMember();
         Long memberId = member.getId();
         int requestQuantity = (param.getQuantity() == null || param.getQuantity() < 1) ? 1 : param.getQuantity();
-        //1.取秒杀关系（Redis缓存 → 回源数据库并回填），价格只认服务端这份数据
+        // 取秒杀关系，价格只认服务端缓存
         FlashPromotionRelationCache relation = getRelationCache(relationId);
         if (relation == null) {
             Asserts.fail("秒杀商品不存在");
@@ -294,7 +236,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         int limit = relation.getFlashPromotionLimit() == null ? 0 : relation.getFlashPromotionLimit();
         final int quantity = (limit > 0 && requestQuantity > limit) ? limit : requestQuantity;
         long ttlSeconds = resolveTtlSeconds(relation);
-        //2.Redis 原子预扣
+        // Redis 原子预扣
         Long luaResult = executeSeckillLua(relationId, memberId, quantity, ttlSeconds);
         if (luaResult != null && luaResult == -1L) {
             //未预热（场次刚开始、应用刚启动、key 刚过期）：懒加载预热一次后重试
@@ -315,11 +257,11 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
             return CommonResult.failed("您已参与过本次秒杀");
         }
         LOGGER.info("秒杀Redis预扣成功，relationId:{}, memberId:{}, quantity:{}, 剩余:{}", relationId, memberId, quantity, luaResult);
-        //3.异步建单（v2 默认）：短事务落排队记录(status=0) + 事务提交后投递MQ消息，接口立即返回「排队中」
+        // v2：落排队记录后发 MQ，接口立即返回排队中
         if (asyncCreate) {
             return enqueueFlashOrder(relation, member, quantity);
         }
-        //3.同步建单（v1，mall.flash.async-create=false）：编程式事务：唯一键冲突/库存扣不动都要回滚订单写入，并由外层补偿 Redis
+        // v1：事务内建单，失败由外层补偿 Redis
         try {
             FlashOrderResult result = transactionTemplate.execute(status -> doCreateFlashOrder(relation, member, quantity));
             return CommonResult.success(result);
@@ -329,19 +271,14 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
             LOGGER.warn("秒杀重复下单被唯一键拦截，relationId:{}, memberId:{}", relationId, memberId);
             return CommonResult.failed("您已参与过本次秒杀");
         } catch (Exception e) {
-            //4.落库失败：归还 Redis 名额（库存加回 + 移除已购标记），避免「Redis扣了但没订单」的名额黑洞
+            // 落库失败要归还 Redis 名额，避免名额黑洞
             compensateRedis(relationId, memberId, quantity);
             LOGGER.error("秒杀下单落库失败已补偿Redis，relationId:{}, memberId:{}, quantity:{}", relationId, memberId, quantity, e);
             throw e;
         }
     }
 
-    /**
-     * 异步建单第一步（v2）：短事务落一条 status=0（排队中）的成交记录（占住 uk_relation_member 唯一键），
-     * 事务提交后投递建单消息，接口立即返回 status=0/排队中。
-     * <p>
-     * 投递失败不影响接口返回：记录已经是排队中，兜底扫描（FlashOrderCreateSweeperTask）会按 15 秒超时重投。
-     */
+        // v2 异步建单：先落一条 status=0 的排队记录占住唯一键，事务提交后再发 MQ，接口直接返回排队中
     private CommonResult<FlashOrderResult> enqueueFlashOrder(FlashPromotionRelationCache relation, UmsMember member, int quantity) {
         Long relationId = relation.getRelationId();
         Long memberId = member.getId();
@@ -394,9 +331,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return CommonResult.success(result);
     }
 
-    /**
-     * 「排队中」结果的统一构造（首次排队与「建单失败后重新抢」共用）
-     */
+    /** 「排队中」结果的统一构造（首次排队与「建单失败后重新抢」共用） */
     private FlashOrderResult buildQueuedResult(FlashPromotionRelationCache relation, FlashPromotionRecord record, int quantity) {
         FlashOrderResult result = new FlashOrderResult();
         result.setRequestId(record.getId());
@@ -412,14 +347,10 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return result;
     }
 
-    /**
-     * 秒杀订单同步落库（v1 路径，mall.flash.async-create=false 时使用）：
-     * 1) 插秒杀成交记录（uk_relation_member 冲突直接抛 DuplicateKeyException）；
-     * 2)~4) 复用 {@link #createOrderForRecord}。
-     */
+    /** v1 同步建单：先插成交记录占住唯一键（冲突说明已经抢过），再走正常下单流程 */
     private FlashOrderResult doCreateFlashOrder(FlashPromotionRelationCache relation, UmsMember member, int quantity) {
         Long productSkuId = resolveProductSkuId(relation);
-        //1)秒杀成交记录占位（无论后面是否成功都要先占住「一人一场次一单」的唯一键）
+        // 先插成交记录，占住一人一单的唯一键
         FlashPromotionRecord record = new FlashPromotionRecord();
         record.setRelationId(relation.getRelationId());
         record.setMemberId(member.getId());
@@ -432,12 +363,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return createOrderForRecord(record, relation, member, quantity);
     }
 
-    /**
-     * 按已存在的成交记录建单（同步模式与 MQ 异步消费者共用，必须在数据库事务内调用）：
-     * 2) 数据库原子预扣 pms_sku_stock.lock_stock（扣不动 → 抛异常整单回滚）；
-     * 3) 插 oms_order(order_type=1)/oms_order_item，回写成交记录的 order_id/order_sn 且 status=1(待支付)；
-     * 4) 注册事务提交后回调，发送秒杀专用延迟取消消息（延迟 = flash_order_overtime 分钟）。
-     */
+    /** 按已存在的成交记录建单，同步模式和 MQ 消费者共用，必须在事务内调用：扣 lock_stock、写订单、回写记录 */
     private FlashOrderResult createOrderForRecord(FlashPromotionRecord record, FlashPromotionRelationCache relation,
                                                   UmsMember member, int quantity) {
         Long memberId = member.getId();
@@ -448,7 +374,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         if (flashPrice == null) {
             Asserts.fail("秒杀价格未配置，无法下单");
         }
-        //2)订单商品行（价格全部取服务端秒杀价，绝不使用前端传值）
+        // 订单商品行取服务端秒杀价
         OmsOrderItem orderItem = new OmsOrderItem();
         orderItem.setProductId(relation.getProductId());
         orderItem.setProductSkuId(productSkuId);
@@ -475,12 +401,12 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         orderItem.setGiftGrowth(0);
         List<OmsOrderItem> orderItemList = new ArrayList<>();
         orderItemList.add(orderItem);
-        //3)数据库侧原子预扣库存：影响行数不足说明 pms_sku_stock 可售库存不够，抛异常回滚整个事务
+        // 条件更新扣库存，影响行数不足就抛异常回滚
         int locked = portalOrderDao.lockSkuStock(orderItemList);
         if (locked < orderItemList.size()) {
             Asserts.fail("库存不足，无法下单");
         }
-        //4)订单主表
+        // 订单主表
         OmsOrder order = new OmsOrder();
         order.setMemberId(memberId);
         order.setMemberUsername(member.getUsername());
@@ -527,13 +453,13 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
             }
         }
         omsOrderMapper.insert(order);
-        //5)订单商品行 + 回写成交记录
+        // 写订单商品行，回写成交记录
         orderItem.setOrderId(order.getId());
         orderItem.setOrderSn(order.getOrderSn());
         portalOrderItemDao.insertList(orderItemList);
         flashPromotionRecordDao.updateOrderInfoWithStatus(record.getId(), order.getId(), order.getOrderSn(), STATUS_UNPAID);
-        //6)事务提交后再发延迟消息（避免消费者先于事务提交看不到订单）；
-        //  MQ发送失败不能让「订单已落库」的接口变成报错，交给超时定时任务兜底取消
+        // 提交后再发延迟取消消息；
+        // 发送失败交给超时任务兜底，不影响已落库的订单
         final long delayTimes = flashOrderOvertime * 60L * 1000L;
         final Long orderId = order.getId();
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -592,7 +518,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         if (recordId == null) {
             return;
         }
-        //1.CAS 领取：只有排队中(0)能进入建单中(10)；影响行数0 = 已处理/重复消息/已被兜底判失败，直接幂等返回
+        // CAS 领取记录，影响行数为 0 说明是重复消息
         int claimed = flashPromotionRecordDao.updateStatusById(recordId, STATUS_QUEUED, STATUS_CREATING);
         if (claimed == 0) {
             LOGGER.info("秒杀建单消息幂等跳过（记录已不是排队中），recordId:{}", recordId);
@@ -605,7 +531,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         }
         int quantity = (record.getQuantity() == null || record.getQuantity() < 1) ? 1 : record.getQuantity();
         try {
-            //2.关系/会员/价格全部回源服务端数据，事务内锁库存+建单+回写记录(1 待支付)
+            // 事务内锁库存、建单、回写记录
             FlashPromotionRelationCache relation = getRelationCache(record.getRelationId());
             if (relation == null) {
                 throw new IllegalStateException("秒杀关系不存在，relationId=" + record.getRelationId());
@@ -618,8 +544,8 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
             LOGGER.info("秒杀异步建单成功，recordId:{}, orderId:{}, orderSn:{}", recordId,
                     created == null ? null : created.getOrderId(), created == null ? null : created.getOrderSn());
         } catch (Exception e) {
-            //3.失败补偿：事务已回滚 → 归还 Redis 名额（库存加回 + 移出已购集合）→ 置 3(建单失败) + 失败原因。
-            //  不向外抛异常：否则消息会被反复重投，而缺库存这类失败重投多少次都不会成功。
+            // 失败补偿：归还 Redis 名额并置为建单失败
+            // 不抛异常，避免缺库存这类失败被反复重投
             compensateRedis(record.getRelationId(), record.getMemberId(), quantity);
             String errorMsg = toErrorMsg(e);
             flashPromotionRecordDao.updateStatusAndError(recordId, STATUS_CREATE_FAILED, errorMsg, STATUS_CREATING);
@@ -697,9 +623,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return true;
     }
 
-    /**
-     * 异常信息截断（error_msg 列 varchar(255)）
-     */
+    /** 异常信息截断（error_msg 列 varchar(255)） */
     private String toErrorMsg(Throwable e) {
         String msg = e.getMessage();
         if (StrUtil.isBlank(msg)) {
@@ -773,11 +697,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return true;
     }
 
-    /**
-     * 秒杀 Redis 预扣（Lua 原子脚本）
-     *
-     * @return 脚本返回值：>=0 扣减后剩余库存；-1 未预热；-2 库存不足；-3 重复下单；null Redis 不可用/脚本异常
-     */
+    /** 秒杀 Redis 预扣（Lua 原子脚本） */
     private Long executeSeckillLua(Long relationId, Long memberId, int quantity, long ttlSeconds) {
         List<String> keys = Arrays.asList(stockKey(relationId), buyersKey(relationId));
         try {
@@ -788,12 +708,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         }
     }
 
-    /**
-     * 归还 Redis 名额（库存加回 + 移除已购标记）
-     * <p>
-     * 幂等：只在「确实扣减成功之后又失败」的分支里调用一次；库存key已过期时不做 incrby，
-     * 避免把过期的库存key重新创建成一个错误的数值（此时下次预热会按数据库口径重建）。
-     */
+    /** 归还 Redis 名额；key 已过期则不 incrby，避免复活过期 key */
     private void compensateRedis(Long relationId, Long memberId, int quantity) {
         try {
             String stockKey = stockKey(relationId);
@@ -807,9 +722,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         }
     }
 
-    /**
-     * 取秒杀关系缓存，未命中回源数据库并预热回填
-     */
+    /** 取秒杀关系缓存，未命中回源数据库并预热回填 */
     private FlashPromotionRelationCache getRelationCache(Long relationId) {
         String json = stringRedisTemplate.opsForValue().get(relationKey(relationId));
         if (StrUtil.isNotBlank(json)) {
@@ -827,10 +740,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return relation;
     }
 
-    /**
-     * 取秒杀商品SKU：优先用关系表的 product_sku_id；测试数据未配置时兜底取该商品「可售库存最多」的SKU，
-     * 并打 WARN 日志（v1 不修改业务数据，只在下单时兜底，避免因为数据缺字段直接失败）
-     */
+    /** 取秒杀 SKU；关系表未配置时兜底取可售库存最多的 SKU */
     private Long resolveProductSkuId(FlashPromotionRelationCache relation) {
         if (relation.getProductSkuId() != null) {
             return relation.getProductSkuId();
@@ -853,9 +763,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return candidate.getId();
     }
 
-    /**
-     * 生成秒杀订单号：与普通订单共用同一个自增序列（key: mall:oms:orderId{yyyyMMdd}）+ 同一套编码规则
-     */
+    /** 生成秒杀订单号：与普通订单共用同一个自增序列（key: mall:oms:orderId{yyyyMMdd}）+ 同一套编码规则 */
     private String generateFlashOrderSn() {
         StringBuilder sb = new StringBuilder();
         String date = new SimpleDateFormat("yyyyMMdd").format(new Date());
@@ -867,11 +775,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return sb.toString();
     }
 
-    /**
-     * 会员默认收货地址（没有默认地址时取第一条；完全没有地址返回 null）
-     * 注意：MQ 消费者线程没有 SecurityContext，不能再用 memberReceiveAddressService.list()（内部依赖当前登录会员），
-     * 统一按 memberId 直接查库，保证同步/异步两条链路行为一致。
-     */
+    /** 取会员默认收货地址。消费者线程没有 SecurityContext，只能直接查库 */
     private UmsMemberReceiveAddress getDefaultAddress(Long memberId) {
         if (memberId == null) {
             return null;
@@ -889,9 +793,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
                 .orElse(addressList.get(0));
     }
 
-    /**
-     * 判断当前时间是否落在场次时间段内（支持跨零点场次；场次时间缺失时不拦截，避免误伤测试数据）
-     */
+    /** 判断当前时间是否在场次时间段内，支持跨零点 */
     private boolean insideSessionWindow(FlashPromotionRelationCache relation) {
         LocalTime start = parseTime(relation.getSessionStartTime());
         LocalTime end = parseTime(relation.getSessionEndTime());
@@ -907,9 +809,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         return !now.isBefore(start) || !now.isAfter(end);
     }
 
-    /**
-     * 计算库存/买家key的TTL（秒）：场次结束即到期，跨零点场次按次日结束时间计算
-     */
+    /** 计算库存/买家key的TTL（秒）：场次结束即到期，跨零点场次按次日结束时间计算 */
     private long resolveTtlSeconds(FlashPromotionRelationCache relation) {
         LocalTime start = parseTime(relation.getSessionStartTime());
         LocalTime end = parseTime(relation.getSessionEndTime());
@@ -942,9 +842,7 @@ public class FlashPromotionSeckillServiceImpl implements FlashPromotionSeckillSe
         }
     }
 
-    /**
-     * 当前时分秒（用于与 TIME 列比较，避免日期部分干扰）
-     */
+    /** 当前时分秒（用于与 TIME 列比较，避免日期部分干扰） */
     private String currentTimeString() {
         return new SimpleDateFormat("HH:mm:ss").format(DateUtil.getTime(new Date()));
     }
