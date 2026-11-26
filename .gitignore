@@ -15,7 +15,9 @@ target/
 .work*/
 .temp/
 .vscode/
+_private/
 *.docx
+*.xlsx
 
 # 运行日志 / JVM 崩溃转储 / 本地探测残留
 *.log
@@ -23,4 +25,6 @@ hs_err_pid*
 replay_pid*
 BOOT-INF/
 _probe*
-_probe*
+
+# 工具运行时的临时状态（不入库）
+.git-rewrite/
